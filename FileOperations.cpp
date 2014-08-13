@@ -10,8 +10,9 @@
 #include <string.h>
 #include <stdlib.h>
 
-//init functions
-
+//////////////////////////////////////////////
+//         Initialization  functions
+//////////////////////////////////////////////
 CVFS* getVFS(){
 	static CVFS *vfs = 0;
 
@@ -32,30 +33,27 @@ void initVFS(int vfs_size){
 	fs->free->next = fs->free->prev = NULL;
 }
 
+/////////////////////////////////////////////
+//            VFS API Functions
+/////////////////////////////////////////////
+
 int createFile(const char* fileName){
 
 	CVFS *vfs = getVFS();
-	FT *trav=vfs->myft,*prev = NULL;
-	while(trav!=NULL){
-		if(strcmp(trav->name,fileName)==0)
-			return ALREADY_EXISTS;
-		prev = trav;
-		trav=trav->next;
-	}
-	trav = new FT();
+	FT *trav = new FT();
+
+	//add new entry to the file table
+	trav->next = vfs->myft;
 	trav->name = (char*)fileName;
 	trav->data = NULL;
-	trav->next = NULL;
 	trav->size = 0;
+	vfs->myft = trav;
 
-	if(prev==NULL)
-		vfs->myft = trav;
-	else
-		prev->next = trav;
 	return SUCCESS;
 }
 
 int writeFile(const char* fileName,const void* buffer,int buffersize,int offset){
+
 	CVFS *vfs = getVFS();
 	FT *trav = vfs->myft;
 
@@ -63,40 +61,37 @@ int writeFile(const char* fileName,const void* buffer,int buffersize,int offset)
 		return NOMEM;
 
 	while(trav != NULL){
+		//search the file
 		if(strcmp(trav->name,fileName)==0){
+
 			BLOCK *prev=NULL,*move=trav->data;
 
 			if((offset && trav->size<=offset) || offset<-1)
 				return NOTDEF;
 
+			//traverse till end
 			if(offset==-1){
-				if(move==NULL){
-					move = get_block(buffersize);
-					trav->data = move;
-				}
-				else {
+				if(move != NULL) {
 					while(move->next != NULL){
 						move = move->next;
 					}
-					move->next = get_block(buffersize);
-					move->next->prev = move;
 
 					prev = move;
 					move = move->next;
 				}
 
-//				buffersize -= move->size;
-				trav->size += move->size;
 				offset = 0;
 			}
 
 			if(offset>0){
+				//traverse till the data block which has specified offset
 				while(offset>=move->size){
 					offset -= move->size;
 					prev = move;
 					move = move->next;
 				}
 
+				//write form offset to end of block or end of buffer
 				memcpy((void*)((char*)vfs->disk + move->offset + offset),buffer,min(buffersize,move->size-offset));
 				//printf("written data:%s - to offset %d till %d characters\n",(char*)buffer,move->offset+offset,min(buffersize,move->size-offset));
 
@@ -108,6 +103,7 @@ int writeFile(const char* fileName,const void* buffer,int buffersize,int offset)
 			}
 
 			while(buffersize>0){
+				//allocate a new block when the next block is NULL for write
 				if(move==NULL){
 					if(prev==NULL)
 						move = trav->data = get_block(buffersize);
@@ -119,10 +115,12 @@ int writeFile(const char* fileName,const void* buffer,int buffersize,int offset)
 					trav->size += move->size;
 				}
 
+				//write the buffer to disk
 				memcpy((void*)((char*)vfs->disk + move->offset),buffer,min(buffersize,move->size));
 
 				//printf("written data:%s - to offset %d till %d characters\n",(char*)buffer,move->offset,min(buffersize,move->size));
 				buffersize -= move->size;
+				//move buffer pointer
 				buffer = (char*)buffer + move->size;
 
 				prev = move;
@@ -141,9 +139,12 @@ int readFile(const char* fileName,void* buffer,int buffersize,int offset){
 
 	int bytes_read = 0;
 
+	//traverse till the required file
 	while(trav!=NULL){
 		if(strcmp(fileName,trav->name)==0){
 			BLOCK* move = trav->data;
+
+			//traverse all data blocks of the file
 			while(move != NULL && buffersize>0){
 
 				while(offset>=move->size){
@@ -151,9 +152,12 @@ int readFile(const char* fileName,void* buffer,int buffersize,int offset){
 					move = move->next;
 				}
 
+				//copy the data in the data block to buffer
 				memcpy(buffer,(void*)((char*)vfs->disk + move->offset + offset),min(buffersize,move->size-offset));
 
+				//increment the buffer point
 				buffer = (char*)buffer + min(move->size-offset,buffersize);
+
 				bytes_read += min(move->size-offset,buffersize);
 				buffersize -= min(move->size-offset,buffersize);
 
@@ -171,11 +175,15 @@ int readFile(const char* fileName,void* buffer,int buffersize,int offset){
 int renameFile(const char* oldName,const char* newName){
 	CVFS *vfs=getVFS();
 	FT *trav = vfs->myft;
+
+	//traverse till the required file
 	while(trav!=NULL){
 		if(strcmp(trav->name,oldName)==0){
+			//rename and return success
 			trav->name = (char*)newName;
 			return SUCCESS;
 		}
+		trav = trav->next;
 	}
 	return NOTFOUND;
 }
@@ -184,15 +192,19 @@ int deleteFile(const char* fileName){
 	CVFS *vfs=getVFS();
 	FT *trav = vfs->myft;
 	FT *prev = NULL;
-	while(trav!=NULL){
 
+	//traverse till the required file
+	while(trav!=NULL){
 		if(strcmp(trav->name,fileName)==0){
 			BLOCK *del = trav->data,*next;
+
+			//add data block of the file to free data blocks
 			while(del!=NULL){
 				next = del->next;
 				add_to_free(del);
 				del = next;
 			}
+
 			if(prev == NULL)
 				vfs->myft = trav->next;
 			else
@@ -201,6 +213,7 @@ int deleteFile(const char* fileName){
 
 			del = vfs->free;
 
+			//combine adjacent data blocks in the free to overcome fragmentation of data blocks in free
 			while(del->next != NULL){
 				if(del->offset+del->size == del->next->offset){
 					del->size += del->next->size;
@@ -213,7 +226,9 @@ int deleteFile(const char* fileName){
 					break;
 			}
 
+			//free the data entry
 			free(trav);
+
 			return SUCCESS;
 		}
 
@@ -228,6 +243,9 @@ BLOCK* get_block(int block_size){
 	CVFS* vfs = getVFS();
 	BLOCK *ret = vfs->free,*suit;
 	int max = 0;
+
+	//return the data block of specified size
+	//or greatest block smaller than specified block
 	while(ret!=NULL){
 		if(ret->size>block_size){
 			BLOCK* found = new BLOCK();
@@ -252,6 +270,7 @@ BLOCK* get_block(int block_size){
 	return suit;
 }
 
+//list all files in the file table
 void listFiles(){
 	CVFS *vfs = getVFS();
 	FT* trav = vfs->myft;
@@ -262,10 +281,12 @@ void listFiles(){
 	}
 }
 
+// find minimum
 int min(int a,int b){
 	return a<=b?a:b;
 }
 
+//add blocks to free blocks in the disk
 void add_to_free(BLOCK* add){
 	CVFS *vfs = getVFS();
 	BLOCK *move = vfs->free,*prev=NULL;
@@ -294,6 +315,7 @@ void add_to_free(BLOCK* add){
 			move->prev = add;
 			prev->next = add;
 			return;
+			//adding the block in the position such the next node starts after present block in lexicographical order
 		}
 		prev = move;
 		move = move->next;
@@ -307,6 +329,7 @@ void add_to_free(BLOCK* add){
 	//printf("adding block offset %d:size %d at end\n",add->offset,add->size);
 }
 
+//list free blocks in the disk
 void list_free_blocks(){
 	CVFS* vfs = getVFS();
 	BLOCK *move = vfs->free;
